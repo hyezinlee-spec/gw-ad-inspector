@@ -1,7 +1,6 @@
 import streamlit as st
 from PIL import Image
 import numpy as np
-import easyocr
 import google.generativeai as genai
 
 # --- [1. Google AI API 설정] ---
@@ -16,34 +15,72 @@ except Exception as e:
     st.error(f"❌ API 연결 오류: {str(e)}")
     st.stop()
 
-# --- [2. 통합 가이드 데이터 세팅] ---
+# --- [2. 통합 가이드 및 상품별 체크리스트 데이터] ---
 GUIDE_DATA = {
     "With Creator Ads": {
-        "BEP (Epilogue)": {"Manuscript": (800, 5000), "Slice": (800, 1280), "Viewer-end": (600, 600)},
-        "BES (Episode)": {"Manuscript": (800, -1), "Slice": (800, 1280), "Thumbnail": (202, 142)},
-        "BWT (Webtoon)": {"Manuscript": (800, -1), "Slice": (800, 1280), "Big Banner": (750, 760)}
+        "BEP (Epilogue)": {
+            "specs": {"Manuscript": (800, 5000), "Slice": (800, 1280), "Viewer-end": (600, 600)},
+            "checklist": ["📍 컷 수: 4~5컷 준수 여부", "📍 원고 높이 최대 5000px 확인", "📍 PSD/Clip Studio 파일 제출 필수"]
+        },
+        "BES (Episode)": {
+            "specs": {"Manuscript": (800, -1), "Slice": (800, 1280), "Thumbnail": (202, 142)},
+            "checklist": ["📍 컷 수: 40~60컷 (50컷 권장) 확인", "📍 슬라이스 이미지 높이 1280px 이하", "📍 에피소드 썸네일(202x142) 포함 여부"]
+        },
+        "BWT (Webtoon)": {
+            "specs": {"Manuscript": (800, -1), "Slice": (800, 1280), "Big Banner": (750, 760)},
+            "checklist": ["📍 최소 40컷 이상 구성 여부", "📍 인앱/홍보용 에셋 규격(750x760 등) 확인", "📍 레이어 분리된 PSD 제출"]
+        }
     },
     "Display Ads": {
-        "Splash Ad": {"Logo": (945, 720), "Bottom Image": (1400, 614)},
-        "Interactive Video": {"Premium": (750, 230), "Thumbnail": (640, 360), "Default": (750, 200)},
-        "Native Image": {"Main": (750, 200)},
-        "Image Banner": {"Main": (640, 200)},
-        "Series Home Ad": {"Main": (750, 160)},
-        "PC Leader Board": {"Main": (970, 90)}
+        "Splash Ad": {
+            "specs": {"Logo": (945, 720), "Bottom Image": (1400, 614)},
+            "checklist": ["📍 로고: PNG 투명 배경 필수", "📍 배경색: S+B <= 160 준수", "📍 광고주 로고는 서비스 로고만 사용 가능"]
+        },
+        "Interactive Video": {
+            "specs": {"Premium": (750, 230), "Thumbnail": (640, 360), "Default": (750, 200)},
+            "checklist": ["📍 프리미엄 이미지: 오브젝트 컷아웃(누끼) 필수", "📍 텍스트: 상하좌우 150px/20px 여백 확인", "📍 비디오: 16:9 비율 및 최대 60초"]
+        },
+        "Native Image": {
+            "specs": {"Main Asset": (750, 200)},
+            "checklist": ["📍 컷아웃/라운딩/서클 형태 규격 확인", "📍 폰트 컬러: #000000 또는 #505050 권장", "📍 텍스트 강조색: 1종만 사용 가능"]
+        },
+        "Series Home Ad": {
+            "specs": {"Main Asset": (750, 160)},
+            "checklist": ["📍 하이라이트(누끼) 또는 썸네일형 규격 확인", "📍 배경색: #FFFFFF, #242424 사용 금지", "📍 메인 카피 30px / 서브 26px 고정"]
+        },
+        "Viewer-end Ad": {
+            "specs": {"Main Asset": (600, 600)},
+            "checklist": ["📍 사방 여백 30px 준수 (텍스트/버튼)", "📍 배경색 명도(B): 15%~90% 사이 권장", "📍 #FFFFFF, #171717 배경 사용 금지"]
+        },
+        "More Tab Ad": {
+            "specs": {"Main Asset": (600, 500)},
+            "checklist": ["📍 좌우 여백 30px 준수", "📍 배경색 명도(B): 15%~90% 사이 권장", "📍 버튼 사용 시 하단 배치 권장"]
+        },
+        "PC Leader Board": {
+            "specs": {"Main Asset": (970, 90)},
+            "checklist": ["📍 텍스트 상하 10px / 좌우 40px 여백", "📍 텍스트 최대 2줄 제한", "📍 버튼 높이 35px 고정"]
+        }
     },
     "Video Ads": {
-        "Full-screen": {"9:16 Video": (1080, 1920), "End Card": (1080, 1920)},
-        "Viewer-top": {"Thumbnail": (1280, 720), "Logo": (300, 300)},
-        "Viewer-end": {"Still Image": (600, 600)}
+        "Full-screen": {
+            "specs": {"9:16 Video": (1080, 1920), "End Card": (1080, 1920)},
+            "checklist": ["📍 엔드카드: 사방 50px 여백 준수", "📍 비디오: 최소 30초 이상 및 MP4 형식", "📍 주요 장면으로 엔드카드 구성"]
+        },
+        "Viewer-top": {
+            "specs": {"Thumbnail": (1280, 720), "Logo": (300, 300)},
+            "checklist": ["📍 광고주 로고: 유색 배경 필수 (투명 PNG 불가)", "📍 로고/썸네일 여백 20px/40px 준수", "📍 광고 카피(28자)/광고주명(19자) 제한"]
+        }
     },
     "Treasure Hunt": {
-        "Global Offerwall": {"List": (720, 360), "Details": (720, 780), "Logo": (144, 144)}
+        "Global Offerwall": {
+            "specs": {"List": (720, 360), "Details": (720, 780), "Logo": (144, 144)},
+            "checklist": ["📍 디바이스 목업 사용 절대 금지", "📍 배경색: #FFFFFF, #000000, #242424 사용 금지", "📍 로고: 좌측 상단 배치 금지"]
+        }
     }
 }
 
 # --- [3. 검수 로직 함수] ---
 def check_bg_safety(img):
-    """S+B <= 160 및 배경색 규정 검사"""
     img_rgb = img.convert('RGB')
     pixels = np.array(img_rgb)
     samples = [pixels[0,0], pixels[0,-1], pixels[-1,0], pixels[-1,-1]]
@@ -56,20 +93,18 @@ def check_bg_safety(img):
     return results
 
 def check_visual_ai(image, product, asset):
-    # 각 상품별 맞춤 프롬프트 생성
     prompt = f"""
     너는 네이버웹툰 광고 검수 전문가야. {product}의 {asset} 에셋을 분석하여 아래 양식으로만 답변해.
     각 라인 끝에 스페이스를 두 번 넣어 줄바꿈을 해줘.
 
     [응답 양식]
-    **· 디바이스 목업사용 :** (의심됩니다 / 의심되지 않습니다)  
-    **· 저작권 및 퀄리티 :** (문제 되지 않습니다 / 확인 필요)  
-    **· 가독성 및 안전영역 :** (문제 되지 않습니다 / 수정 권장)  
+    **· 디바이스 목업사용 :** (상태)  
+    **· 저작권 및 퀄리티 :** (상태)  
+    **· 가독성 및 안전영역 :** (상태)  
 
     [검수 가이드]
-    1. Treasure Hunt/Splash: 디바이스 목업 절대 금지.
-    2. Video Ads: 로고는 반드시 유색 배경이어야 함.
-    3. Safe Area: 텍스트가 사방 여백(30~50px)을 침범하는지 확인.
+    - 선택된 상품인 {product}의 가이드를 최우선으로 적용해.
+    - 여백(Safe Area) 침범 여부와 텍스트 가독성을 중점적으로 봐줘.
     """
     try:
         response = model.generate_content([prompt, image])
@@ -78,13 +113,15 @@ def check_visual_ai(image, product, asset):
         return "⚠️ AI 사용량 초과로 분석이 지연되고 있습니다. 수동 체크리스트를 확인하세요."
 
 # --- [4. UI 구성] ---
-st.set_page_config(page_title="WEBTOON Ad Master Inspector", layout="wide")
+st.set_page_config(page_title="WEBTOON Ad Master Inspector v6.4", layout="wide")
 
 with st.sidebar:
     st.header("📂 Category")
     cat = st.selectbox("대분류", list(GUIDE_DATA.keys()))
     prod = st.selectbox("상품명", list(GUIDE_DATA[cat].keys()))
-    specs = GUIDE_DATA[cat][prod]
+    product_info = GUIDE_DATA[cat][prod]
+    specs = product_info["specs"]
+    checklist = product_info["checklist"]
 
 st.title(f"🚀 {prod} Inspector")
 
@@ -96,47 +133,30 @@ if files:
         w, h = img.size
         kb = len(f.getvalue()) / 1024
         
-        # 선택한 상품(prod)의 상세 규격들 가져오기
-        allowed_specs = GUIDE_DATA[cat][prod]
-        
-        # 현재 올린 파일이 선택한 상품의 규격 중 하나라도 일치하는지 확인
         matched_asset = None
-        for a_name, a_size in allowed_specs.items():
-            # 가변 높이(-1, 5000 등) 대응 로직 포함
+        for a_name, a_size in specs.items():
             if w == a_size[0] and (a_size[1] == -1 or h == a_size[1] or (a_size[1] == 5000 and h <= 5000)):
-                matched_asset = a_name
-                break
+                matched_asset = a_name; break
 
         with st.expander(f"🔍 {f.name}", expanded=True):
             if matched_asset:
-                # [CASE 1: 규격 일치] - 정상 검수 진행
                 c1, c2 = st.columns([1, 1.5])
                 with c1: st.image(img, use_container_width=True)
                 with c2:
-                    st.success(f"✅ 규격 확인됨: {prod} > {matched_asset}")
-                    st.write(f"✔️ **사이즈:** {w}x{h}px")
-                    st.write(f"✔️ **용량:** {kb:.1f}KB")
+                    st.success(f"✅ 규격 확인됨: {matched_asset}")
+                    st.write(f"✔️ **사이즈:** {w}x{h}px / **용량:** {kb:.1f}KB")
                     
-                    # AI 분석 버튼 활성화
+                    scores = check_bg_safety(img)
+                    if scores: st.warning(f"⚠️ **배경색 주의:** S+B 수치({max(scores):.1f})가 160을 초과할 수 있습니다.")
+                    
                     if st.button(f"Analyze {f.name[:10]}", key=f.name):
                         with st.spinner("AI 분석 중..."):
                             st.info(check_visual_ai(img, prod, matched_asset))
             else:
-                # [CASE 2: 규격 불일치] - 강력한 제지 및 경고
-                st.error(f"🚨 **규격 미달/불일치:** 업로드한 이미지({w}x{h})는 현재 선택한 상품 **[{prod}]**의 가이드에 존재하지 않는 사이즈입니다.")
-                
-                # 가이드 수치 다시 리마인드
-                st.info(f"💡 **{prod}**의 올바른 규격은 다음과 같습니다:")
-                for n, s in allowed_specs.items():
-                    height_txt = "가변" if s[1] == -1 else f"{s[1]}px"
-                    st.write(f"- {n}: 가로 {s[0]}px / 세로 {height_txt}")
-                
-                # 버튼을 아예 띄우지 않거나 비활성화하여 API 낭비 및 오검수 방지
-                st.warning("⚠️ 규격이 맞지 않아 AI 정밀 검수를 진행할 수 없습니다.")
+                st.error(f"🚨 규격 불일치: {w}x{h}px은 {prod}의 가이드에 없습니다.")
 
 with st.sidebar:
     st.divider()
-    st.subheader("📝 필수 체크리스트")
-    st.write("📍 원본 **PSD/Clip Studio** 파일 포함 여부")
-    st.write("📍 **#FFFFFF, #000000** 배경 사용 가능 여부 재확인")
-    st.write("📍 텍스트 **Safe Area** 준수 여부")
+    st.subheader(f"📝 {prod} 체크리스트")
+    for item in checklist:
+        st.write(item)
