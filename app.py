@@ -96,26 +96,43 @@ if files:
         w, h = img.size
         kb = len(f.getvalue()) / 1024
         
-        # 에셋 타입 자동 매칭
-        matched = "미분류 에셋"
-        for a_name, a_size in specs.items():
+        # 선택한 상품(prod)의 상세 규격들 가져오기
+        allowed_specs = GUIDE_DATA[cat][prod]
+        
+        # 현재 올린 파일이 선택한 상품의 규격 중 하나라도 일치하는지 확인
+        matched_asset = None
+        for a_name, a_size in allowed_specs.items():
+            # 가변 높이(-1, 5000 등) 대응 로직 포함
             if w == a_size[0] and (a_size[1] == -1 or h == a_size[1] or (a_size[1] == 5000 and h <= 5000)):
-                matched = a_name; break
+                matched_asset = a_name
+                break
 
-        with st.expander(f"🔍 {f.name} ({matched})", expanded=True):
-            c1, c2 = st.columns([1, 1.5])
-            with c1: st.image(img, use_container_width=True)
-            with c2:
-                st.write(f"✔️ **규격:** {w}x{h}px")
-                st.write(f"✔️ **용량:** {kb:.1f}KB")
+        with st.expander(f"🔍 {f.name}", expanded=True):
+            if matched_asset:
+                # [CASE 1: 규격 일치] - 정상 검수 진행
+                c1, c2 = st.columns([1, 1.5])
+                with c1: st.image(img, use_container_width=True)
+                with c2:
+                    st.success(f"✅ 규격 확인됨: {prod} > {matched_asset}")
+                    st.write(f"✔️ **사이즈:** {w}x{h}px")
+                    st.write(f"✔️ **용량:** {kb:.1f}KB")
+                    
+                    # AI 분석 버튼 활성화
+                    if st.button(f"Analyze {f.name[:10]}", key=f.name):
+                        with st.spinner("AI 분석 중..."):
+                            st.info(check_visual_ai(img, prod, matched_asset))
+            else:
+                # [CASE 2: 규격 불일치] - 강력한 제지 및 경고
+                st.error(f"🚨 **규격 미달/불일치:** 업로드한 이미지({w}x{h})는 현재 선택한 상품 **[{prod}]**의 가이드에 존재하지 않는 사이즈입니다.")
                 
-                # 배경색 규정 체크
-                scores = check_bg_safety(img)
-                if scores: st.warning(f"⚠️ **배경색 주의:** S+B 수치({max(scores):.1f})가 160을 초과합니다.")
+                # 가이드 수치 다시 리마인드
+                st.info(f"💡 **{prod}**의 올바른 규격은 다음과 같습니다:")
+                for n, s in allowed_specs.items():
+                    height_txt = "가변" if s[1] == -1 else f"{s[1]}px"
+                    st.write(f"- {n}: 가로 {s[0]}px / 세로 {height_txt}")
                 
-                if st.button(f"Analyze {f.name[:10]}", key=f.name):
-                    with st.spinner("AI 분석 중..."):
-                        st.info(check_visual_ai(img, prod, matched))
+                # 버튼을 아예 띄우지 않거나 비활성화하여 API 낭비 및 오검수 방지
+                st.warning("⚠️ 규격이 맞지 않아 AI 정밀 검수를 진행할 수 없습니다.")
 
 with st.sidebar:
     st.divider()
