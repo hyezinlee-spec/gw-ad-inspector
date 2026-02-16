@@ -2,11 +2,15 @@ import streamlit as st
 from PIL import Image
 import numpy as np
 import google.generativeai as genai
+import cv2
+import tempfile
+import os
 
 # --- [1. Google AI API 설정] ---
 try:
     if "GEMINI_API_KEY" in st.secrets:
         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+        # 사용자 리스트에 확인된 모델명을 그대로 사용합니다.
         model = genai.GenerativeModel('gemini-2.5-flash')
     else:
         st.error("❌ API 키 설정이 필요합니다. Streamlit Secrets를 확인하세요.")
@@ -15,7 +19,8 @@ except Exception as e:
     st.error(f"❌ API 연결 오류: {str(e)}")
     st.stop()
 
-# --- [2. 통합 가이드 및 상품별 체크리스트 데이터] ---
+# --- [2. 통합 가이드 및 데이터] ---
+# specs 구조: (너비, 높이, [영상일 경우 추가: 최소초, 최대초, 최대용량MB])
 GUIDE_DATA = {
     "With Creator Ads": {
         "BEP (Epilogue)": {
@@ -37,7 +42,7 @@ GUIDE_DATA = {
             "checklist": ["📍 로고: PNG 투명 배경 필수", "📍 배경색: S+B <= 160 준수", "📍 광고주 로고는 서비스 로고만 사용 가능"]
         },
         "Interactive Video": {
-            "specs": {"Premium": (750, 230), "Thumbnail": (640, 360), "Default": (750, 200)},
+            "specs": {"Premium": (750, 230), "Thumbnail": (640, 360), "Default": (750, 200), "Video": (1280, 720, 1, 60, 200)},
             "checklist": ["📍 프리미엄 이미지: 오브젝트 컷아웃(누끼) 필수", "📍 텍스트: 상하좌우 150px/20px 여백 확인", "📍 비디오: 16:9 비율 및 최대 60초"]
         },
         "Native Image": {
@@ -63,12 +68,16 @@ GUIDE_DATA = {
     },
     "Video Ads": {
         "Full-screen": {
-            "specs": {"9:16 Video": (1080, 1920), "End Card": (1080, 1920)},
-            "checklist": ["📍 엔드카드: 사방 50px 여백 준수", "📍 비디오: 최소 30초 이상 및 MP4 형식", "📍 주요 장면으로 엔드카드 구성"]
+            "specs": {"9:16 Video": (1080, 1920, 30, -1, 50), "End Card": (1080, 1920)},
+            "checklist": ["📍 엔드카드: 사방 50px 여백 준수", "📍 비디오: 최소 30초 이상 및 최대 50MB", "📍 주요 장면으로 엔드카드 구성"]
         },
         "Viewer-top": {
-            "specs": {"Thumbnail": (1280, 720), "Logo": (300, 300)},
-            "checklist": ["📍 광고주 로고: 유색 배경 필수 (투명 PNG 불가)", "📍 로고/썸네일 여백 20px/40px 준수", "📍 광고 카피(28자)/광고주명(19자) 제한"]
+            "specs": {"16:9 Video": (1280, 720, 15, 300, 1024), "Thumbnail": (1280, 720), "Logo": (300, 300)},
+            "checklist": ["📍 비디오: 15~300초 / 최대 1GB", "📍 광고주 로고: 유색 배경 필수 (투명 PNG 불가)", "📍 로고/썸네일 여백 20px/40px 준수"]
+        },
+        "Viewer-end": {
+            "specs": {"1:1 Video": (1080, 1080, 1, 15, 30), "Still Image": (600, 600)},
+            "checklist": ["📍 비디오: 1:1 비율 / 15초 권장 / 최대 30MB", "📍 배경색 명도(B): 15%~90% 사이 권장"]
         }
     },
     "Treasure Hunt": {
@@ -92,6 +101,20 @@ def check_bg_safety(img):
         if (s*100 + v*100) > 160: results.append(s*100 + v*100)
     return results
 
+def get_video_info(f):
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp:
+        tmp.write(f.getvalue())
+        tmp_path = tmp.name
+    cap = cv2.VideoCapture(tmp_path)
+    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+    duration = frames / fps if fps > 0 else 0
+    cap.release()
+    os.unlink(tmp_path)
+    return w, h, duration
+
 def check_visual_ai(image, product, asset):
     prompt = f"""
     너는 네이버웹툰 광고 검수 전문가야. {product}의 {asset} 에셋을 분석하여 아래 양식으로만 답변해.
@@ -113,7 +136,7 @@ def check_visual_ai(image, product, asset):
         return "⚠️ AI 사용량 초과로 분석이 지연되고 있습니다. 수동 체크리스트를 확인하세요."
 
 # --- [4. UI 구성] ---
-st.set_page_config(page_title="WEBTOON Ad Master Inspector v6.4", layout="wide")
+st.set_page_config(page_title="WEBTOON Ad Master Inspector v6.5", layout="wide")
 
 with st.sidebar:
     st.header("📂 Category")
@@ -129,31 +152,56 @@ files = st.file_uploader("검수할 에셋 업로드 (여러 개 가능)", accep
 
 if files:
     for f in files:
-        img = Image.open(f)
-        w, h = img.size
-        kb = len(f.getvalue()) / 1024
+        # 파일 타입 판별 (영상 여부 확인)
+        is_video = f.type.startswith('video')
+        w, h, duration = 0, 0, 0
+        mb = len(f.getvalue()) / (1024 * 1024)
         
+        # [수술 부위: 영상/이미지 분기 처리]
+        if is_video:
+            w, h, duration = get_video_info(f)
+        else:
+            img = Image.open(f)
+            w, h = img.size
+
+        # 공통 매칭 로직
         matched_asset = None
-        for a_name, a_size in specs.items():
-            if w == a_size[0] and (a_size[1] == -1 or h == a_size[1] or (a_size[1] == 5000 and h <= 5000)):
+        for a_name, a_val in specs.items():
+            # 해상도 기본 체크
+            res_ok = (w == a_val[0]) and (a_val[1] == -1 or h == a_val[1] or (len(a_val)>1 and a_val[1] == 5000 and h <= 5000))
+            
+            # 영상일 경우 추가 조건(초수, 용량) 체크
+            if is_video and len(a_val) >= 5:
+                dur_ok = (a_val[2] == -1 or duration >= a_val[2]) and (a_val[3] == -1 or duration <= a_val[3])
+                size_ok = (mb <= a_val[4])
+                if res_ok and dur_ok and size_ok: matched_asset = a_name; break
+            elif not is_video and res_ok:
                 matched_asset = a_name; break
 
         with st.expander(f"🔍 {f.name}", expanded=True):
             if matched_asset:
                 c1, c2 = st.columns([1, 1.5])
-                with c1: st.image(img, use_container_width=True)
+                with c1:
+                    if is_video: st.video(f)
+                    else: st.image(img, use_container_width=True)
                 with c2:
-                    st.success(f"✅ 규격 확인됨: {matched_asset}")
-                    st.write(f"✔️ **사이즈:** {w}x{h}px / **용량:** {kb:.1f}KB")
+                    st.success(f"✅ 검수 통과: {matched_asset}")
+                    info_text = f"✔️ **규격:** {w}x{h}px / **용량:** {mb:.2f}MB"
+                    if is_video: info_text += f" / **시간:** {duration:.1f}초"
+                    st.write(info_text)
                     
-                    scores = check_bg_safety(img)
-                    if scores: st.warning(f"⚠️ **배경색 주의:** S+B 수치({max(scores):.1f})가 160을 초과할 수 있습니다.")
+                    if not is_video:
+                        scores = check_bg_safety(img)
+                        if scores: st.warning(f"⚠️ **배경색 주의:** S+B 수치({max(scores):.1f})가 160을 초과할 수 있습니다.")
                     
-                    if st.button(f"Analyze {f.name[:10]}", key=f.name):
+                    # AI 분석 버튼 (영상은 현재 이미지 분석 로직이므로 비활성화)
+                    if st.button(f"Analyze {f.name[:10]}", key=f.name, disabled=is_video):
                         with st.spinner("AI 분석 중..."):
                             st.info(check_visual_ai(img, prod, matched_asset))
             else:
-                st.error(f"🚨 규격 불일치: {w}x{h}px은 {prod}의 가이드에 없습니다.")
+                st.error(f"🚨 규격/조건 불일치: {w}x{h}px, {mb:.2f}MB" + (f", {duration:.1f}s" if is_video else ""))
+                if is_video: st.video(f)
+                else: st.image(img, width=300)
 
 with st.sidebar:
     st.divider()
