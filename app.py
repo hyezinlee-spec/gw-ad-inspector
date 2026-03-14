@@ -41,13 +41,23 @@ GUIDE_DATA = {
             "specs": {"Logo": (945, 720), "Bottom Image": (1400, 614)},
             "checklist": ["📍 로고: PNG 투명 배경 필수", "📍 배경색: S+B <= 160 준수", "📍 광고주 로고는 서비스 로고만 사용 가능"]
         },
-        "Interactive Video": {
-            "specs": {"Premium": (750, 230), "Thumbnail": (640, 360), "Default": (750, 200), "Video": (1280, 720, 1, 60, 200)},
-            "checklist": ["📍 프리미엄 이미지: 오브젝트 컷아웃(누끼) 필수", "📍 텍스트: 상하좌우 150px/20px 여백 확인", "📍 비디오: 16:9 비율 및 최대 60초"]
+        "Premium Home Ad (Image)": {
+            "specs": {"Main Asset": (640, 200, -1, -1, 0.2)}, # 200KB
+            "checklist": [
+                "📍 규격: 640x200px / JPG / 200KB 이하",
+                "📍 배경: 양 끝 1px 단색(Solid) 처리 필수 (배경 확장용)",
+                "📍 텍스트: 상하좌우 20px Safe Area 준수",
+                "📍 버튼: 높이 45px 고정 / 버튼 내 텍스트 좌우 여백 20px"
+            ]
         },
-        "Native Image": {
-            "specs": {"Main Asset": (750, 200)},
-            "checklist": ["📍 컷아웃/라운딩/서클 형태 규격 확인", "📍 폰트 컬러: #000000 또는 #505050 권장", "📍 텍스트 강조색: 1종만 사용 가능"]
+        "Premium Home Ad (Native)": {
+            "specs": {"Main Asset": (750, 200, -1, -1, 0.15)}, # 150KB
+            "checklist": [
+                "📍 규격: 750x200px / PNG(투명 배경) 필수 / 150KB 이하",
+                "📍 오브젝트: 260x200px 영역 내 배치 / 좌우 50px 여백 필수",
+                "📍 텍스트: 컬러 #000000 또는 #505050 고정 사용",
+                "📍 강조: 강조색 1종(문장의 60% 이내) 또는 Bold(1줄만) 제한"
+            ]
         },
         "Series Home Ad": {
             "specs": {"Main Asset": (750, 160)},
@@ -67,6 +77,20 @@ GUIDE_DATA = {
         }
     },
     "Video Ads": {
+        "Interactive Video": {
+            "specs": {
+                "Premium Image": (750, 230, -1, -1, 0.15),
+                "Default Image": (750, 200, -1, -1, 0.15),
+                "Video Thumbnail": (640, 360, -1, -1, 0.15),
+                "16:9 Video": (1920, 1080, 1, 60, 1024) # 1GB
+            },
+            "checklist": [
+                "📍 비디오: 1920x1080 / 최대 60초 / 사운드 필수(침묵 불가)",
+                "📍 프리미엄 이미지: PNG(투명 배경) / 우측 여백 150px 확보",
+                "📍 오브젝트: 260x207px 영역 내 (면적 70% 이내)",
+                "📍 텍스트: 최소 14pt~최대 30pt / 행간 10px 이상 준수"
+            ]
+        },
         "Full-screen": {
             "specs": {"9:16 Video": (1080, 1920, 30, -1, 50), "End Card": (1080, 1920)},
             "checklist": ["📍 엔드카드: 사방 50px 여백 준수", "📍 비디오: 최소 30초 이상 및 최대 50MB", "📍 주요 장면으로 엔드카드 구성"]
@@ -87,7 +111,6 @@ GUIDE_DATA = {
         }
     }
 }
-
 # --- [3. 검수 로직 함수] ---
 def check_bg_safety(img):
     img_rgb = img.convert('RGB')
@@ -178,30 +201,63 @@ if files:
             elif not is_video and res_ok:
                 matched_asset = a_name; break
 
-        with st.expander(f"🔍 {f.name}", expanded=True):
-            if matched_asset:
-                c1, c2 = st.columns([1, 1.5])
-                with c1:
-                    if is_video: st.video(f)
-                    else: st.image(img, use_container_width=True)
-                with c2:
-                    st.success(f"✅ 검수 통과: {matched_asset}")
-                    info_text = f"✔️ **규격:** {w}x{h}px / **용량:** {mb:.2f}MB"
-                    if is_video: info_text += f" / **시간:** {duration:.1f}초"
-                    st.write(info_text)
-                    
-                    if not is_video:
-                        scores = check_bg_safety(img)
-                        if scores: st.warning(f"⚠️ **배경색 주의:** S+B 수치({max(scores):.1f})가 160을 초과할 수 있습니다.")
-                    
-                    # AI 분석 버튼 (영상은 현재 이미지 분석 로직이므로 비활성화)
-                    if st.button(f"Analyze {f.name[:10]}", key=f.name, disabled=is_video):
-                        with st.spinner("AI 분석 중..."):
-                            st.info(check_visual_ai(img, prod, matched_asset))
-            else:
-                st.error(f"🚨 규격/조건 불일치: {w}x{h}px, {mb:.2f}MB" + (f", {duration:.1f}s" if is_video else ""))
-                if is_video: st.video(f)
-                else: st.image(img, width=300)
+with st.expander(f"🔍 {f.name}", expanded=True):
+    error_reasons = []  # 미준수 사유 저장 리스트
+    
+    # 해당 상품의 스펙들 중 가장 유사한 에셋을 찾아 비교 (여기서는 첫 번째 스펙 기준 예시)
+    # Full-screen의 경우 '9:16 Video' 스펙을 기준으로 체크 로직 강화
+    for a_name, a_val in specs.items():
+        # 영상/이미지 타입 일치 여부 확인
+        asset_is_video = len(a_val) >= 5
+        if is_video != asset_is_video: continue
+
+        # 1. 해상도 체크
+        res_ok = (w == a_val[0]) and (a_val[1] == -1 or h == a_val[1] or (a_val[1] == 5000 and h <= 5000))
+        if not res_ok:
+            error_reasons.append(f"❌ **해상도 불일치:** {w}x{h} (권장: {a_val[0]}x{a_val[1] if a_val[1] != -1 else '자유'})")
+        
+        # 2. 영상 전용 체크 (시간, 용량)
+        if is_video:
+            # 시간 체크
+            dur_min_ok = (a_val[2] == -1 or duration >= a_val[2])
+            dur_max_ok = (a_val[3] == -1 or duration <= a_val[3])
+            if not dur_min_ok:
+                error_reasons.append(f"❌ **시간 부족:** {duration:.1f}초 (최소 {a_val[2]}초 이상 필요)")
+            if not dur_max_ok:
+                error_reasons.append(f"❌ **시간 초과:** {duration:.1f}초 (최대 {a_val[3]}초 이하 필요)")
+            
+            # 용량 체크
+            size_ok = (mb <= a_val[4])
+            if not size_ok:
+                error_reasons.append(f"❌ **용량 초과:** {mb:.2f}MB (최대 {a_val[4]}MB 제한)")
+        
+        # 모든 조건 만족 시 매칭 성공
+        if not error_reasons:
+            matched_asset = a_name
+            break
+
+    # --- [결과 화면 출력] ---
+    c1, c2 = st.columns([1, 1.5])
+    with c1:
+        if is_video: st.video(f)
+        else: st.image(img, use_container_width=True)
+
+    with c2:
+        if matched_asset:
+            st.success(f"✅ **검수 통과: {matched_asset}**")
+            info_text = f"✔️ **규격:** {w}x{h}px  |  **용량:** {mb:.2f}MB"
+            if is_video: info_text += f"  |  **시간:** {duration:.1f}초"
+            st.write(info_text)
+            
+            # 배경색 분석 (이미지 전용)
+            if not is_video:
+                scores = check_bg_safety(img)
+                if scores: st.warning(f"⚠️ **배경색 주의:** S+B 수치({max(scores):.1f})가 160을 초과합니다.")
+        else:
+            st.error("🚨 **검수 결과: 규격 미준수**")
+            for reason in error_reasons:
+                st.write(reason)
+            st.info(f"💡 **현재 파일 정보:** {w}x{h}px, {mb:.2f}MB, {duration:.1f}s")
 
 with st.sidebar:
     st.divider()
